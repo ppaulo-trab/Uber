@@ -99,6 +99,94 @@
   }
   .odometer-sub b{ color: var(--text); font-weight: 600; }
 
+  /* ---------- Goal / meta ---------- */
+  .goal-card{
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .goal-head{
+    display:flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 12px;
+  }
+  .goal-head .panel-title{ margin-bottom:0; }
+  .goal-edit-btn{
+    background:none; border:none;
+    color: var(--text-dim);
+    font-size: 12px;
+    font-family: var(--sans);
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+  }
+  .goal-edit-btn:hover{ color: var(--amber); background: var(--bg); }
+
+  .goal-numbers{
+    display:flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+  }
+  .goal-current{
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 22px;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .goal-target{
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  .goal-bar-track{
+    height: 14px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+  }
+  .goal-bar-fill{
+    height: 100%;
+    background: linear-gradient(90deg, var(--amber), #ffcf6e);
+    border-radius: 8px 0 0 8px;
+    transition: width .4s ease;
+    position: relative;
+  }
+  .goal-bar-fill.complete{
+    background: linear-gradient(90deg, var(--green), #6dffb0);
+  }
+  .goal-foot{
+    display:flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+  .goal-foot b{ color: var(--text); font-family: var(--mono); }
+  .goal-foot .hit{ color: var(--green); font-weight: 700; }
+
+  .goal-edit-form{ display:none; }
+  .goal-edit-form.show{ display:block; margin-top: 4px; }
+  .goal-edit-row{ display:flex; gap: 8px; margin-top: 10px; }
+  .goal-edit-row .input-row{ flex:1; }
+  .goal-edit-row button{
+    border:none; border-radius: 10px;
+    padding: 0 18px;
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    background: var(--amber);
+    color: #1A1306;
+  }
+
   /* ---------- Input panel ---------- */
   .panel{
     background: var(--surface);
@@ -363,6 +451,38 @@
     </div>
   </div>
 
+  <!-- META MENSAL -->
+  <div class="goal-card">
+    <div class="goal-head">
+      <div class="panel-title" style="margin-bottom:0;"><span class="dot" style="background:var(--green)"></span>Meta do mês</div>
+      <button class="goal-edit-btn" id="btnEditGoal">editar</button>
+    </div>
+
+    <div id="goalDisplay">
+      <div class="goal-numbers">
+        <span class="goal-current" id="goalCurrent">R$ 0</span>
+        <span class="goal-target" id="goalTargetLabel">meta R$ 0</span>
+      </div>
+      <div class="goal-bar-track">
+        <div class="goal-bar-fill" id="goalBarFill" style="width:0%"></div>
+      </div>
+      <div class="goal-foot">
+        <span id="goalPercent">0% da meta</span>
+        <span id="goalRemaining">faltam R$ 0</span>
+      </div>
+    </div>
+
+    <div class="goal-edit-form" id="goalEditForm">
+      <div class="goal-edit-row">
+        <div class="input-row">
+          <span class="prefix">R$</span>
+          <input type="number" inputmode="decimal" placeholder="4000" id="inputGoal" step="50" min="0">
+        </div>
+        <button id="btnSaveGoal">Salvar</button>
+      </div>
+    </div>
+  </div>
+
   <div class="panel">
     <div class="grid2">
       <div class="stat">
@@ -520,14 +640,15 @@
   function load(){
     try{
       const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : { days: [], expenses: [] };
-    }catch(e){ return { days: [], expenses: [] }; }
+      return raw ? JSON.parse(raw) : { days: [], expenses: [], goal: 4000 };
+    }catch(e){ return { days: [], expenses: [], goal: 4000 }; }
   }
   function save(data){
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   }
 
   let data = load();
+  if(typeof data.goal !== 'number') data.goal = 4000;
 
   function fmtBRL(n){
     return 'R$ ' + (n||0).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
@@ -589,7 +710,30 @@
     const totalHoras = totalMin/60;
     document.getElementById('statRh').textContent = totalHoras > 0 ? fmtBRL(totalIncome/totalHoras) : 'R$ 0,00';
 
+    renderGoal(totalIncome);
     renderHistory();
+  }
+
+  function renderGoal(totalIncome){
+    const goal = data.goal || 0;
+    const pct = goal > 0 ? Math.min(100, (totalIncome/goal)*100) : 0;
+    const remaining = Math.max(0, goal - totalIncome);
+
+    document.getElementById('goalCurrent').textContent = fmtBRLShort(totalIncome);
+    document.getElementById('goalTargetLabel').textContent = 'meta ' + fmtBRLShort(goal);
+
+    const fill = document.getElementById('goalBarFill');
+    fill.style.width = pct + '%';
+    fill.classList.toggle('complete', totalIncome >= goal && goal > 0);
+
+    document.getElementById('goalPercent').textContent = Math.round(pct) + '% da meta';
+
+    const remainingEl = document.getElementById('goalRemaining');
+    if(goal > 0 && totalIncome >= goal){
+      remainingEl.innerHTML = '<span class="hit">meta batida ✓</span>';
+    }else{
+      remainingEl.textContent = 'faltam ' + fmtBRL(remaining);
+    }
   }
 
   function renderHistory(){
@@ -730,12 +874,36 @@
 
   document.getElementById('btnReset').addEventListener('click', () => {
     if(confirm('Isso vai apagar todos os dias e gastos salvos neste navegador. Continuar?')){
-      data = { days: [], expenses: [] };
+      data = { days: [], expenses: [], goal: data.goal || 4000 };
       save(data);
       recalc();
       document.getElementById('receiptWrap').classList.remove('show');
       showToast('Tudo apagado');
     }
+  });
+
+  document.getElementById('btnEditGoal').addEventListener('click', () => {
+    const form = document.getElementById('goalEditForm');
+    const isShowing = form.classList.contains('show');
+    if(!isShowing){
+      document.getElementById('inputGoal').value = data.goal || '';
+      form.classList.add('show');
+      document.getElementById('goalDisplay').style.opacity = '0.5';
+    }else{
+      form.classList.remove('show');
+      document.getElementById('goalDisplay').style.opacity = '1';
+    }
+  });
+
+  document.getElementById('btnSaveGoal').addEventListener('click', () => {
+    const val = parseFloat(document.getElementById('inputGoal').value);
+    if(isNaN(val) || val < 0){ showToast('Informe um valor de meta válido'); return; }
+    data.goal = val;
+    save(data);
+    recalc();
+    document.getElementById('goalEditForm').classList.remove('show');
+    document.getElementById('goalDisplay').style.opacity = '1';
+    showToast('Meta atualizada ✓');
   });
 
   recalc();
