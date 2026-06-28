@@ -187,6 +187,92 @@
     color: #1A1306;
   }
 
+  /* ---------- Paste extrato ---------- */
+  .paste-btn{
+    width: 100%;
+    background: var(--bg);
+    border: 1.5px dashed var(--line);
+    border-radius: 12px;
+    padding: 14px;
+    color: var(--text-dim);
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 13.5px;
+    cursor: pointer;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: border-color .15s ease, color .15s ease;
+  }
+  .paste-btn:hover{ border-color: var(--amber); color: var(--amber); }
+  .paste-btn .icon{ font-size: 16px; }
+
+  .paste-area{ display:none; }
+  .paste-area.show{ display:block; margin-bottom: 16px; }
+  .paste-textarea{
+    width: 100%;
+    min-height: 120px;
+    background: var(--bg);
+    border: 1.5px solid var(--line);
+    border-radius: 12px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 12px;
+    resize: vertical;
+    outline: none;
+  }
+  .paste-textarea:focus{ border-color: var(--amber); }
+  .paste-area-actions{ display:flex; gap: 8px; margin-top: 10px; }
+  .paste-area-actions button{
+    flex:1;
+    border:none; border-radius: 10px;
+    padding: 12px;
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 13.5px;
+    cursor: pointer;
+  }
+  .btn-parse{ background: var(--amber); color: #1A1306; }
+  .btn-cancel-paste{ background: transparent; color: var(--text-dim); border: 1px solid var(--line) !important; }
+
+  .paste-hint{
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin-top: 8px;
+    line-height: 1.5;
+  }
+
+  .preview-box{ display:none; }
+  .preview-box.show{ display:block; margin-top: 14px; }
+  .preview-card{
+    background: var(--bg);
+    border: 1px solid var(--amber-dim);
+    border-radius: 12px;
+    padding: 14px;
+  }
+  .preview-title{
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--amber);
+    margin-bottom: 10px;
+    font-weight: 700;
+  }
+  .preview-row{
+    display:flex;
+    justify-content: space-between;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 13.5px;
+  }
+  .preview-row:last-child{ border-bottom: none; }
+  .preview-row .lbl{ color: var(--text-dim); }
+  .preview-row .val{ font-family: var(--mono); font-weight: 600; color: var(--text); }
+  .preview-empty{ color: var(--text-dim); font-style: italic; }
+
   /* ---------- Input panel ---------- */
   .panel{
     background: var(--surface);
@@ -508,6 +594,26 @@
   <div class="panel">
     <div class="panel-title"><span class="dot"></span>Registrar o dia</div>
 
+    <button class="paste-btn" id="btnShowPaste">
+      <span class="icon">📋</span> Colar extrato da Uber
+    </button>
+
+    <div class="paste-area" id="pasteArea">
+      <textarea class="paste-textarea" id="pasteTextarea" placeholder="Cole aqui o texto do extrato de ganhos da Uber (da tela do app, do e-mail ou do CSV)..."></textarea>
+      <div class="paste-area-actions">
+        <button class="btn-cancel-paste" id="btnCancelPaste">Cancelar</button>
+        <button class="btn-parse" id="btnParsePaste">Ler extrato</button>
+      </div>
+      <div class="paste-hint">Funciona melhor copiando o texto direto da tela "Ganhos" do app ou do extrato por e-mail. O app procura a data, o valor recebido e os km, se aparecerem.</div>
+
+      <div class="preview-box" id="previewBox">
+        <div class="preview-card">
+          <div class="preview-title">Encontrado no extrato</div>
+          <div id="previewContent"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="field">
       <label>Data</label>
       <div class="input-row date-row">
@@ -806,6 +912,123 @@
     `;
   }
 
+  document.getElementById('btnShowPaste').addEventListener('click', () => {
+    document.getElementById('pasteArea').classList.add('show');
+    document.getElementById('btnShowPaste').style.display = 'none';
+    document.getElementById('pasteTextarea').focus();
+  });
+
+  document.getElementById('btnCancelPaste').addEventListener('click', () => {
+    document.getElementById('pasteArea').classList.remove('show');
+    document.getElementById('btnShowPaste').style.display = 'flex';
+    document.getElementById('pasteTextarea').value = '';
+    document.getElementById('previewBox').classList.remove('show');
+  });
+
+  function parseExtrato(text){
+    const result = { valor: null, km: null, horas: null, minutos: null, date: null };
+
+    // Valor em R$: pega o maior valor monetário encontrado (geralmente é o total)
+    const valorMatches = [...text.matchAll(/R\$\s*([\d.,]+\d)/gi)];
+    if(valorMatches.length){
+      const valores = valorMatches.map(m => {
+        let n = m[1].replace(/\./g,'').replace(',', '.');
+        return parseFloat(n);
+      }).filter(n => !isNaN(n));
+      if(valores.length) result.valor = Math.max(...valores);
+    }
+
+    // Km: procura número seguido de "km"
+    const kmMatch = text.match(/([\d.,]+)\s*km\b/i);
+    if(kmMatch){
+      let n = kmMatch[1].replace(/\./g,'').replace(',', '.');
+      result.km = parseFloat(n);
+    }
+
+    // Tempo online: prioriza um número próximo da palavra "online"/"tempo"/"duração"
+    let result_horas = null, result_minutos = null;
+    const contextMatch = text.match(/(?:tempo\s*online|online|duração|duracao)[^\d]{0,15}(\d{1,2})\s*h\s*(\d{1,2})?\s*(?:min)?/i);
+    if(contextMatch){
+      result_horas = parseInt(contextMatch[1]);
+      result_minutos = contextMatch[2] ? parseInt(contextMatch[2]) : 0;
+    }else{
+      const tempoMatch1 = text.match(/\b(\d{1,2})\s*h\s*(\d{1,2})\s*min\b/i);
+      const tempoMatch2 = text.match(/\b(\d{1,2})\s*h\b(?!\d)/i);
+      const tempoMatch3 = text.match(/online\s*[:\-]?\s*(\d{1,2}):(\d{2})\b/i);
+      if(tempoMatch1){
+        result_horas = parseInt(tempoMatch1[1]);
+        result_minutos = parseInt(tempoMatch1[2]);
+      }else if(tempoMatch3){
+        result_horas = parseInt(tempoMatch3[1]);
+        result_minutos = parseInt(tempoMatch3[2]);
+      }else if(tempoMatch2){
+        result_horas = parseInt(tempoMatch2[1]);
+        result_minutos = 0;
+      }
+    }
+    result.horas = result_horas;
+    result.minutos = result_minutos;
+
+    // Data: procura DD/MM/AAAA ou DD/MM
+    const dateMatch = text.match(/(\d{1,2})\/(\d{1,2})\/?(\d{4}|\d{2})?/);
+    if(dateMatch){
+      const dia = dateMatch[1].padStart(2,'0');
+      const mes = dateMatch[2].padStart(2,'0');
+      let ano = dateMatch[3] || new Date().getFullYear().toString();
+      if(ano.length === 2) ano = '20' + ano;
+      result.date = `${ano}-${mes}-${dia}`;
+    }
+
+    return result;
+  }
+
+  document.getElementById('btnParsePaste').addEventListener('click', () => {
+    const text = document.getElementById('pasteTextarea').value;
+    if(!text.trim()){ showToast('Cole o texto do extrato primeiro'); return; }
+
+    const parsed = parseExtrato(text);
+    const preview = document.getElementById('previewContent');
+    const rows = [];
+
+    if(parsed.date){
+      document.getElementById('inputDate').value = parsed.date;
+      rows.push(`<div class="preview-row"><span class="lbl">Data</span><span class="val">${fmtDateBR(parsed.date)}</span></div>`);
+    }else{
+      rows.push(`<div class="preview-row"><span class="lbl">Data</span><span class="val preview-empty">não encontrada — confirme manualmente</span></div>`);
+    }
+
+    if(parsed.valor !== null){
+      document.getElementById('inputValor').value = parsed.valor.toFixed(2);
+      rows.push(`<div class="preview-row"><span class="lbl">Valor recebido</span><span class="val">${fmtBRL(parsed.valor)}</span></div>`);
+    }else{
+      rows.push(`<div class="preview-row"><span class="lbl">Valor recebido</span><span class="val preview-empty">não encontrado — preencha manualmente</span></div>`);
+    }
+
+    if(parsed.km !== null){
+      document.getElementById('inputKm').value = parsed.km;
+      rows.push(`<div class="preview-row"><span class="lbl">Km rodados</span><span class="val">${parsed.km} km</span></div>`);
+    }else{
+      rows.push(`<div class="preview-row"><span class="lbl">Km rodados</span><span class="val preview-empty">não encontrado — preencha manualmente</span></div>`);
+    }
+
+    if(parsed.horas !== null){
+      document.getElementById('inputHoras').value = parsed.horas;
+      document.getElementById('inputMinutos').value = parsed.minutos || 0;
+      rows.push(`<div class="preview-row"><span class="lbl">Tempo online</span><span class="val">${parsed.horas}h ${parsed.minutos||0}min</span></div>`);
+    }else{
+      rows.push(`<div class="preview-row"><span class="lbl">Tempo online</span><span class="val preview-empty">não encontrado — preencha manualmente</span></div>`);
+    }
+
+    preview.innerHTML = rows.join('');
+    document.getElementById('previewBox').classList.add('show');
+
+    if(parsed.valor === null && parsed.km === null){
+      showToast('Não consegui identificar os dados — confira o texto colado');
+    }else{
+      showToast('Extrato lido — confira os campos abaixo ✓');
+    }
+  });
+
   document.getElementById('btnSave').addEventListener('click', () => {
     const date = document.getElementById('inputDate').value || todayISO();
     const valor = parseFloat(document.getElementById('inputValor').value);
@@ -832,6 +1055,10 @@
     document.getElementById('inputKm').value = '';
     document.getElementById('inputHoras').value = '';
     document.getElementById('inputMinutos').value = '';
+    document.getElementById('pasteTextarea').value = '';
+    document.getElementById('pasteArea').classList.remove('show');
+    document.getElementById('previewBox').classList.remove('show');
+    document.getElementById('btnShowPaste').style.display = 'flex';
     showToast('Dia salvo ✓');
   });
 
