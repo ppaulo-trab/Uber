@@ -6,6 +6,8 @@
 <title>Turno — Controle do Motorista</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
   :root{
     --bg: #0D1117;
@@ -272,6 +274,87 @@
   .preview-row .lbl{ color: var(--text-dim); }
   .preview-row .val{ font-family: var(--mono); font-weight: 600; color: var(--text); }
   .preview-empty{ color: var(--text-dim); font-style: italic; }
+
+  /* ---------- Upload de arquivo ---------- */
+  .upload-row{
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .upload-btn{
+    flex: 1;
+    background: var(--bg);
+    border: 1.5px dashed var(--line);
+    border-radius: 12px;
+    padding: 14px 10px;
+    color: var(--text-dim);
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 12.5px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    transition: border-color .15s ease, color .15s ease;
+    text-align: center;
+  }
+  .upload-btn:hover{ border-color: var(--amber); color: var(--amber); }
+  .upload-btn .icon{ font-size: 20px; }
+  .upload-btn input[type="file"]{ display: none; }
+
+  .ocr-status{
+    display: none;
+    background: var(--bg);
+    border: 1px solid var(--amber-dim);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 16px;
+    text-align: center;
+  }
+  .ocr-status.show{ display: block; }
+  .ocr-status-text{
+    font-size: 13px;
+    color: var(--amber);
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+  .ocr-bar-track{
+    height: 8px;
+    background: var(--surface-2);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .ocr-bar-fill{
+    height: 100%;
+    width: 0%;
+    background: var(--amber);
+    transition: width .2s ease;
+  }
+  .ocr-preview-img{
+    max-width: 100%;
+    max-height: 140px;
+    border-radius: 8px;
+    margin-top: 10px;
+    border: 1px solid var(--line);
+  }
+
+  .divider-or{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    color: var(--text-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+  }
+  .divider-or::before, .divider-or::after{
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
 
   /* ---------- Input panel ---------- */
   .panel{
@@ -594,6 +677,27 @@
   <div class="panel">
     <div class="panel-title"><span class="dot"></span>Registrar o dia</div>
 
+    <div class="upload-row">
+      <label class="upload-btn" id="btnUploadFile">
+        <span class="icon">📄</span>
+        Enviar PDF ou CSV
+        <input type="file" id="fileInputDoc" accept=".pdf,.csv,.txt">
+      </label>
+      <label class="upload-btn" id="btnUploadImage">
+        <span class="icon">📷</span>
+        Enviar print/foto
+        <input type="file" id="fileInputImage" accept="image/*" capture="environment">
+      </label>
+    </div>
+
+    <div class="ocr-status" id="ocrStatus">
+      <div class="ocr-status-text" id="ocrStatusText">Lendo arquivo...</div>
+      <div class="ocr-bar-track"><div class="ocr-bar-fill" id="ocrBarFill"></div></div>
+      <img class="ocr-preview-img" id="ocrPreviewImg" style="display:none;">
+    </div>
+
+    <div class="divider-or">ou</div>
+
     <button class="paste-btn" id="btnShowPaste">
       <span class="icon">📋</span> Colar extrato da Uber
     </button>
@@ -742,6 +846,11 @@
 <script>
 (function(){
   const STORAGE_KEY = 'turno_dados_v1';
+
+  // Configura o worker do PDF.js (necessário para ler PDFs)
+  if(typeof pdfjsLib !== 'undefined'){
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
 
   function load(){
     try{
@@ -982,11 +1091,7 @@
     return result;
   }
 
-  document.getElementById('btnParsePaste').addEventListener('click', () => {
-    const text = document.getElementById('pasteTextarea').value;
-    if(!text.trim()){ showToast('Cole o texto do extrato primeiro'); return; }
-
-    const parsed = parseExtrato(text);
+  function applyParsedToForm(parsed){
     const preview = document.getElementById('previewContent');
     const rows = [];
 
@@ -1021,13 +1126,100 @@
 
     preview.innerHTML = rows.join('');
     document.getElementById('previewBox').classList.add('show');
+    document.getElementById('pasteArea').classList.add('show');
+    document.getElementById('btnShowPaste').style.display = 'none';
 
     if(parsed.valor === null && parsed.km === null){
-      showToast('Não consegui identificar os dados — confira o texto colado');
+      showToast('Não consegui identificar os dados — confira manualmente');
     }else{
-      showToast('Extrato lido — confira os campos abaixo ✓');
+      showToast('Dados lidos — confira os campos abaixo ✓');
+    }
+  }
+
+  document.getElementById('btnParsePaste').addEventListener('click', () => {
+    const text = document.getElementById('pasteTextarea').value;
+    if(!text.trim()){ showToast('Cole o texto do extrato primeiro'); return; }
+    applyParsedToForm(parseExtrato(text));
+  });
+
+  // ---------- Upload de PDF / CSV ----------
+  function setOcrStatus(msg, pct){
+    const box = document.getElementById('ocrStatus');
+    box.classList.add('show');
+    document.getElementById('ocrStatusText').textContent = msg;
+    document.getElementById('ocrBarFill').style.width = (pct||0) + '%';
+  }
+  function hideOcrStatus(){
+    document.getElementById('ocrStatus').classList.remove('show');
+    document.getElementById('ocrPreviewImg').style.display = 'none';
+  }
+
+  document.getElementById('fileInputDoc').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    e.target.value = '';
+
+    try{
+      if(file.name.toLowerCase().endsWith('.pdf')){
+        setOcrStatus('Lendo PDF...', 30);
+        const buf = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+        let fullText = '';
+        for(let i=1; i<=pdf.numPages; i++){
+          setOcrStatus(`Lendo página ${i} de ${pdf.numPages}...`, 30 + (i/pdf.numPages)*60);
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          fullText += content.items.map(it => it.str).join(' ') + '\n';
+        }
+        setOcrStatus('Identificando dados...', 95);
+        applyParsedToForm(parseExtrato(fullText));
+      }else{
+        setOcrStatus('Lendo arquivo...', 50);
+        const text = await file.text();
+        setOcrStatus('Identificando dados...', 95);
+        applyParsedToForm(parseExtrato(text));
+      }
+    }catch(err){
+      showToast('Não consegui ler esse arquivo');
+      console.error(err);
+    }finally{
+      setTimeout(hideOcrStatus, 600);
     }
   });
+
+  // ---------- Upload de imagem (OCR local) ----------
+  document.getElementById('fileInputImage').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    e.target.value = '';
+
+    const imgUrl = URL.createObjectURL(file);
+    const imgPreview = document.getElementById('ocrPreviewImg');
+    imgPreview.src = imgUrl;
+    imgPreview.style.display = 'block';
+
+    setOcrStatus('Preparando leitura da imagem...', 5);
+
+    try{
+      const result = await Tesseract.recognize(file, 'por', {
+        logger: (m) => {
+          if(m.status === 'recognizing text'){
+            setOcrStatus('Lendo texto da imagem...', 10 + Math.round(m.progress*85));
+          }else if(m.status){
+            setOcrStatus('Preparando leitura da imagem...', 8);
+          }
+        }
+      });
+      setOcrStatus('Identificando dados...', 98);
+      applyParsedToForm(parseExtrato(result.data.text));
+    }catch(err){
+      showToast('Não consegui ler essa imagem — tente outra foto ou cole o texto manualmente');
+      console.error(err);
+    }finally{
+      setTimeout(hideOcrStatus, 800);
+    }
+  });
+
 
   document.getElementById('btnSave').addEventListener('click', () => {
     const date = document.getElementById('inputDate').value || todayISO();
@@ -1059,6 +1251,7 @@
     document.getElementById('pasteArea').classList.remove('show');
     document.getElementById('previewBox').classList.remove('show');
     document.getElementById('btnShowPaste').style.display = 'flex';
+    document.getElementById('ocrStatus').classList.remove('show');
     showToast('Dia salvo ✓');
   });
 
